@@ -2,6 +2,17 @@ data "google_client_config" "current" {}
 
 data "google_project" "current" {}
 
+provider "kubernetes" {
+  alias = "direct"
+
+  load_config_file = false
+
+  cluster_ca_certificate = base64decode(google_container_cluster.rack.master_auth.0.cluster_ca_certificate)
+  host                   = "https://${google_container_cluster.rack.endpoint}"
+  username               = "gcloud"
+  password               = random_string.password.result
+}
+
 resource "random_string" "password" {
   length  = 64
   special = true
@@ -99,19 +110,6 @@ resource "local_file" "kubeconfig" {
   lifecycle {
     ignore_changes = [content]
   }
-}
-
-provider "kubernetes" {
-  version = "~> 1.11"
-
-  alias = "direct"
-
-  load_config_file = false
-
-  cluster_ca_certificate = base64decode(google_container_cluster.rack.master_auth.0.cluster_ca_certificate)
-  host                   = "https://${google_container_cluster.rack.endpoint}"
-  username               = "gcloud"
-  password               = random_string.password.result
 }
 
 resource "kubernetes_cluster_role_binding" "client" {
