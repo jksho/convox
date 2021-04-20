@@ -118,11 +118,137 @@ resource "kubernetes_storage_class" "volumes_storage_class" {
       "storageclass.kubernetes.io/is-default-class" = "true"
     }
   }
+
+  parameters = {
+    provisioningMode = "efs-ap"
+    fileSystemId = aws_efs_file_system.efs_data.id
+    directoryPerms = "700"
+  }
+
   storage_provisioner = "efs.csi.aws.com"
   reclaim_policy      = "Retain"
 
   depends_on = [
     aws_eks_node_group.cluster,
+  ]
+}
+
+resource "kubernetes_cluster_role_binding" "efs_role_binding" {
+  metadata {
+    name = "efs_role_binding"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "cluster-admin"
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = "default"
+    namespace = "default"
+  }
+}
+
+resource "kubernetes_service_account" "efs_service_account" {
+  metadata {
+    name = "efs-csi-controller-sa"
+    namespace = "kube-system"
+    labels = {
+      "app.kubernetes.io/name" = "aws-efs-csi-driver"
+    }
+    annotations = {
+      "eks.amazonaws.com/role-arn" = aws_iam_role.efs_role.arn
+    }
+  }
+}
+
+resource "aws_efs_file_system" "efs_data" {
+  creation_token = aws_eks_cluster.cluster.name
+
+  encrypted = true
+
+  performance_mode = "generalPurpose" #maxIO
+  throughput_mode  = "bursting"
+
+  lifecycle_policy {
+    transition_to_ia = "AFTER_30_DAYS"
+  }
+}
+
+data "aws_efs_file_system" "efs_data" {
+  file_system_id = aws_efs_file_system.efs_data.id
+}
+
+resource "aws_efs_access_point" "efs_data" {
+  file_system_id = aws_efs_file_system.efs_data.id
+}
+
+resource "aws_efs_file_system_policy" "efs_data" {
+  file_system_id = aws_efs_file_system.efs_data.id
+
+  policy = jsonencode({
+    "Version" : "2012-10-17",
+    "Statement" : [
+      {
+        "Effect" : "Allow",
+        "Principal" : {
+          "AWS" : "*"
+        },
+        "Action" : "elasticfilesystem:ClientMount",
+        "Resource" : aws_efs_file_system.efs_data.arn
+      },
+      {
+        "Effect" : "Deny",
+        "Principal" : {
+          "AWS" : "*"
+        },
+        "Action" : "*",
+        "Resource" : aws_efs_file_system.efs_data.arn,
+        "Condition" : {
+          "Bool" : {
+            "aws:SecureTransport" : "false"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_security_group" "allow_eks_cluster" {
+  name        = aws_eks_cluster.cluster.name
+  description = "This will allow the cluster to access this volume and use it."
+  vpc_id      = aws_vpc.nodes.id
+
+  ingress {
+    description = "NFS For EKS Cluster"
+    from_port   = 2049
+    to_port     = 2049
+    protocol    = "tcp"
+    security_groups = [
+      aws_security_group.cluster.id
+    ]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "allow_tls"
+  }
+}
+
+resource "aws_efs_mount_target" "efs_mount_targets" {
+  count = 3
+
+  file_system_id = aws_efs_file_system.efs_data.id
+  subnet_id      = var.private ? aws_subnet.private[count.index].id : aws_subnet.public[count.index].id
+
+  security_groups = [
+    aws_security_group.cluster.id
   ]
 }
 

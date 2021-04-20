@@ -22,6 +22,24 @@ data "aws_iam_policy_document" "assume_eks" {
   }
 }
 
+data "aws_iam_policy_document" "assume_efs" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    effect  = "Allow"
+
+    condition {
+      test     = "StringEquals"
+      variable = local.oidc_sub
+      values   = ["system:serviceaccount:kube-system:efs-csi-controller-sa"]
+    }
+
+    principals {
+      identifiers = [aws_iam_openid_connect_provider.cluster.arn]
+      type        = "Federated"
+    }
+  }
+}
+
 resource "aws_iam_role" "cluster" {
   assume_role_policy = data.aws_iam_policy_document.assume_eks.json
   name               = "${var.name}-cluster"
@@ -41,6 +59,48 @@ resource "aws_iam_role_policy_attachment" "cluster_eks_service" {
 resource "aws_iam_role_policy_attachment" "cluster_ec2_readonly" {
   role       = aws_iam_role.cluster.name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonEC2ReadOnlyAccess"
+}
+
+resource "aws_iam_role" "efs_role" {
+  name = "${var.name}-efs"
+  assume_role_policy = data.aws_iam_policy_document.assume_efs.json
+}
+
+resource "aws_iam_policy" "efs_management_policy" {
+  name        = "${var.name}-efs-management"
+  description = "EFS Management Policy for Convox"
+
+  policy = jsonencode({
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = ["elasticfilesystem:DescribeAccessPoints","elasticfilesystem:DescribeFileSystems"]
+          Resource = "*"
+        },
+        {
+          Effect = "Allow"
+          Action = ["elasticfilesystem:CreateAccessPoint"]
+          Resource = "*"
+          Condition = {
+            StringLike = { "aws:RequestTag/efs.csi.aws.com/cluster" = "true" }
+          }
+        },
+        {
+          Effect = "Allow"
+          Action = "elasticfilesystem:DeleteAccessPoint"
+          Resource = "*"
+          Condition = {
+            StringEquals = { "aws:ResourceTag/efs.csi.aws.com/cluster" = "true" }
+          }
+        }
+      ]
+    })
+}
+
+resource "aws_iam_role_policy_attachment" "efs_management" {
+  role       = "${aws_iam_role.efs_role.name}"
+  policy_arn = "${aws_iam_policy.efs_management_policy.arn}"
 }
 
 resource "aws_iam_role" "nodes" {
