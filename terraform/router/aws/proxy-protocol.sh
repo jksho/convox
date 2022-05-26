@@ -20,7 +20,7 @@ then
     exit 1
 fi
 
-target_groups=$(aws resourcegroupstaggingapi get-resources --tag-filters "Key=kubernetes.io/service-name,Values=$1-system/router" --resource-type-filters "elasticloadbalancing:targetgroup")
+target_groups=$(aws --region=$3 resourcegroupstaggingapi get-resources --tag-filters "Key=kubernetes.io/service-name,Values=$1-system/router" --resource-type-filters "elasticloadbalancing:targetgroup")
 target_groups=$(echo $target_groups | jq -r "[.ResourceTagMappingList[] | .ResourceARN] | @sh" | tr -d \')
 
 seconds=0
@@ -39,5 +39,5 @@ do
 done
 
 for group in $target_groups; do
-    aws elbv2 modify-target-group-attributes --target-group-arn $group --attributes Key=proxy_protocol_v2.enabled,Value=$2 > /dev/null
+    aws --region=$3 elbv2 modify-target-group-attributes --target-group-arn $group --attributes Key=proxy_protocol_v2.enabled,Value=$2 > /dev/null
 done
