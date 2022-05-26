@@ -20,7 +20,7 @@ then
     exit 1
 fi
 
-sleep 5 # make sure the load-balancer and target groups associated with the router service were already created 
+sleep 30 # make sure the load-balancer and target groups associated with the router service were already created
 
 target_groups=$(aws resourcegroupstaggingapi get-resources --tag-filters "Key=kubernetes.io/service-name,Values=$1-system/router" --resource-type-filters "elasticloadbalancing:targetgroup")
 
